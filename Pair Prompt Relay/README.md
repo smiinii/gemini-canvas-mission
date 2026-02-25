@@ -8,7 +8,7 @@
 
 [@picetea44](https://github.com/picetea44)
 
-### 배포 링크  : https://gemini.google.com/share/53c02d6aecec 
+### 배포 링크  : [https://gemini.google.com/share/53c02d6aecec](https://gemini.google.com/share/53c02d6aecec)
 
 ### 이 앱을 만든 이유
 
