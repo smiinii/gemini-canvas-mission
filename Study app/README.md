@@ -2,7 +2,7 @@
 ## 카테고리: 학습 앱
 
 ### 배포 링크
-https://gemini.google.com/share/6ab7c31d1276
+https://gemini.google.com/share/5501c3577083
 
 ### 이 앱을 만든 이유
 
