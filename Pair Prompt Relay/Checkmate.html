@@ -98,7 +98,8 @@
         
         .calendar-grid {
             display: grid;
-            grid-template-columns: repeat(7, 1fr);
+            /* 핵심: minmax(0, 1fr)로 설정하여 모바일에서 화면 바깥으로 삐져나가는 것을 방지합니다. */
+            grid-template-columns: repeat(7, minmax(0, 1fr)); 
             gap: 1px;
             background-color: var(--border);
             border: 1px solid var(--border);
@@ -126,16 +127,22 @@
         .calendar-cell.other-month { color: var(--text-muted); background: #fafafa; }
         
         .date-num { font-size: 0.9rem; font-weight: 500; margin-bottom: 4px; }
-        .event-list { display: flex; flex-direction: column; gap: 4px; flex: 1; overflow-y: auto; }
+        /* 가로 스크롤 방지를 위해 overflow-x: hidden 추가 */
+        .event-list { display: flex; flex-direction: column; gap: 4px; flex: 1; overflow-y: auto; overflow-x: hidden; }
         .event-badge {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
             font-size: 0.75rem;
             padding: 2px 6px;
             border-radius: 4px;
             color: white;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
+            gap: 4px;
         }
+        /* flex: 1 과 min-width: 0 을 조합하여 말줄임표(...)가 모바일에서도 정상 작동하도록 수정 */
+        .event-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; min-width: 0; }
+        .event-delete { cursor: pointer; opacity: 0.8; padding: 2px; font-weight: bold; font-size: 0.8rem; }
+        .event-delete:hover { opacity: 1; }
         .event-leave { background: var(--primary); }
         .event-vacation { background: var(--danger); }
         .event-lunch { background: var(--secondary); }
@@ -212,12 +219,22 @@
         .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
         .btn-cancel { padding: 8px 16px; background: var(--bg-body); border-radius: 4px; }
 
-        /* Responsive */
+        /* Responsive - 모바일 최적화 강화 */
         @media (max-width: 768px) {
-            .main-content { flex-direction: column; }
+            .app-container { padding: 10px; gap: 15px; }
+            header { flex-direction: column; align-items: stretch; gap: 12px; padding: 16px; }
+            .header-controls { justify-content: space-between; }
+            .main-content { flex-direction: column; gap: 15px; }
             .calendar-section, .sidebar-section { width: 100%; }
-            .calendar-cell { min-height: 80px; }
-            .event-badge { font-size: 0.65rem; }
+            .calendar-section { padding: 12px; }
+            .card { padding: 16px; }
+            .calendar-cell { min-height: 75px; padding: 4px; }
+            .calendar-day-header { padding: 6px 0; font-size: 0.8rem; }
+            .event-badge { font-size: 0.65rem; padding: 3px 4px; }
+            .event-text { font-size: 0.65rem; }
+            .date-num { font-size: 0.85rem; margin-bottom: 2px; }
+            .status-buttons { grid-template-columns: 1fr 1fr; gap: 8px; }
+            .btn-status { padding: 8px; font-size: 0.9rem; }
         }
     </style>
 </head>
@@ -402,10 +419,25 @@
         </div>
     </div>
 
+    <!-- 삭제 확인 커스텀 모달 (iframe 차단 우회) -->
+    <div class="modal-overlay" id="confirm-modal">
+        <div class="modal-content" style="max-width: 300px; text-align: center;">
+            <h3 id="confirm-msg" style="margin-bottom: 20px; font-size: 1.1rem;">삭제하시겠습니까?</h3>
+            <div style="display: flex; justify-content: center; gap: 10px;">
+                <button class="btn-cancel" onclick="app.closeModal('confirm-modal')">취소</button>
+                <button class="btn-primary" style="background: var(--danger);" id="confirm-btn">삭제</button>
+            </div>
+        </div>
+    </div>
+
     <!-- ==========================================================================
          JavaScript (Vanilla JS Architecture)
          ========================================================================== -->
-    <script>
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, updateDoc, collection, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
         /**
          * 20년 경력의 바닐라 JS 아키텍처:
          * 1. 전역 네임스페이스 오염 방지를 위해 하나의 객체(app) 안으로 캡슐화.
@@ -415,6 +447,27 @@
          */
 
         const STORE_PREFIX = '16th_team_';
+
+        // 실시간 클라우드 저장소 초기화 설정
+        let db = null;
+        let auth = null;
+        let colRef = null;
+        let docRef = null;
+        let isCloudReady = false;
+
+        try {
+            if (typeof __firebase_config !== 'undefined') {
+                const firebaseConfig = JSON.parse(__firebase_config);
+                const firebaseApp = initializeApp(firebaseConfig);
+                auth = getAuth(firebaseApp);
+                db = getFirestore(firebaseApp);
+                const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+                colRef = collection(db, 'artifacts', appId, 'public', 'data', 'team_data');
+                docRef = doc(colRef, 'main_state');
+            }
+        } catch (e) {
+            console.warn("클라우드 모드를 사용할 수 없어 로컬 모드로 작동합니다.");
+        }
 
         // 1. Data Store (로컬 스토리지 래퍼)
         const store = {
@@ -464,17 +517,65 @@
             },
 
             // 초기화
-            init() {
+            async init() {
                 this.renderUserSelector();
                 this.bindEvents();
                 
-                // 초기 상태 설정
-                if (Object.keys(this.state.statuses).length === 0) {
-                    this.state.users.forEach(u => this.state.statuses[u.id] = { text: '근무중', color: '#ef4444' });
-                    this.saveData('statuses');
-                }
+                // 최신 자바스크립트 모듈 방식을 사용하므로, HTML의 onclick에서 찾을 수 있도록 window에 연결합니다.
+                window.app = this;
+                
+                // 클라우드 저장소가 연결된 경우
+                if (auth && db) {
+                    const initAuth = async () => {
+                        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                            await signInWithCustomToken(auth, __initial_auth_token);
+                        } else {
+                            await signInAnonymously(auth);
+                        }
+                    };
+                    await initAuth();
 
-                this.renderAll();
+                    // 실시간 데이터 동기화 시작 (누군가 데이터를 바꾸면 즉시 모든 화면에 반영)
+                    onAuthStateChanged(auth, (user) => {
+                        if (user) {
+                            isCloudReady = true;
+                            // 콜렉션 단위로 리스닝하여 변경사항 감지 강화
+                            onSnapshot(colRef, (snapshot) => {
+                                let hasData = false;
+                                snapshot.forEach((docSnap) => {
+                                    if (docSnap.id === 'main_state') {
+                                        hasData = true;
+                                        const data = docSnap.data();
+                                        this.state.events = data.events || {};
+                                        this.state.posts = data.posts || [];
+                                        this.state.votes = data.votes || [];
+                                        this.state.statuses = data.statuses || {};
+                                    }
+                                });
+
+                                if (!hasData) {
+                                    // 초기 데이터가 없는 경우 셋팅
+                                    if (Object.keys(this.state.statuses).length === 0) {
+                                        this.state.users.forEach(u => this.state.statuses[u.id] = { text: '근무중', color: '#ef4444' });
+                                    }
+                                    this.saveAllToCloud();
+                                } else {
+                                    // 데이터가 있으면 리렌더링
+                                    this.renderAll();
+                                }
+                            }, (error) => {
+                                console.error("동기화 에러:", error);
+                            });
+                        }
+                    });
+                } else {
+                    // 클라우드가 없는 경우 기존처럼 로컬에서만 동작
+                    if (Object.keys(this.state.statuses).length === 0) {
+                        this.state.users.forEach(u => this.state.statuses[u.id] = { text: '근무중', color: '#ef4444' });
+                        this.saveData('statuses');
+                    }
+                    this.renderAll();
+                }
             },
 
             renderAll() {
@@ -498,6 +599,13 @@
 
                 // 캘린더 날짜 클릭 (이벤트 위임)
                 this.els.calendarGrid.addEventListener('click', (e) => {
+                    // 삭제 버튼을 눌렀을 때의 처리
+                    if (e.target.classList.contains('event-delete')) {
+                        e.stopPropagation(); // 일정 등록 모달이 뜨는 것을 방지
+                        this.deleteEvent(e.target.dataset.date, e.target.dataset.id);
+                        return;
+                    }
+
                     const cell = e.target.closest('.calendar-cell');
                     if (cell && cell.dataset.date) {
                         const date = cell.dataset.date;
@@ -515,6 +623,13 @@
                 document.getElementById('event-form').addEventListener('submit', (e) => this.handleEventSubmit(e));
                 document.getElementById('post-form').addEventListener('submit', (e) => this.handlePostSubmit(e));
                 document.getElementById('vote-form').addEventListener('submit', (e) => this.handleVoteSubmit(e));
+
+                // 정보 게시판 삭제 버튼 클릭 (이벤트 위임)
+                this.els.boardList.addEventListener('click', (e) => {
+                    if (e.target.classList.contains('btn-delete-post')) {
+                        this.deletePost(e.target.dataset.id);
+                    }
+                });
             },
 
             // ==================================================================
@@ -591,7 +706,15 @@
                     const colorClass = `event-${evt.type}`;
                     // XSS 방어: innerText 역할 (템플릿 리터럴 내부이므로 제한적, 실무에선 escape 함수 사용)
                     const title = evt.title.replace(/</g, "&lt;").replace(/>/g, "&gt;");
-                    html += `<div class="event-badge ${colorClass}" title="${title}">${evt.authorName}: ${title}</div>`;
+                    
+                    // 본인 일정일 경우 삭제 버튼 표시 (데이터 속성으로 변경)
+                    const isMine = evt.authorId === this.state.currentUser.id;
+                    const deleteHtml = isMine ? `<span class="event-delete" data-date="${dateString}" data-id="${evt.id}">✕</span>` : '';
+                    
+                    html += `<div class="event-badge ${colorClass}" title="${title}">
+                                <span class="event-text">${evt.authorName}: ${title}</span>
+                                ${deleteHtml}
+                             </div>`;
                 });
                 
                 html += `</div>`;
@@ -632,11 +755,20 @@
                 // 최신글이 위로 오도록 역순 정렬 렌더링
                 [...this.state.posts].reverse().forEach(post => {
                     const content = post.content.replace(/\n/g, '<br>').replace(/</g, "&lt;").replace(/>/g, "&gt;");
+                    
+                    // 본인 글일 경우 삭제 버튼 표시 (데이터 속성 및 클래스로 변경)
+                    const deleteBtn = post.authorId === this.state.currentUser.id 
+                        ? `<button class="btn-delete-post" style="color: var(--danger); font-size: 0.75rem; margin-left: 8px;" data-id="${post.id}">삭제</button>` 
+                        : '';
+                        
                     html += `
                         <div class="board-item">
                             <div class="board-item-header">
                                 <span>${post.authorName}</span>
-                                <span>${post.date}</span>
+                                <div>
+                                    <span>${post.date}</span>
+                                    ${deleteBtn}
+                                </div>
                             </div>
                             <div>${content}</div>
                         </div>
@@ -811,6 +943,35 @@
                 e.target.reset();
             },
 
+            confirmDelete(message, onConfirm) {
+                document.getElementById('confirm-msg').textContent = message;
+                const btn = document.getElementById('confirm-btn');
+                btn.onclick = () => {
+                    onConfirm();
+                    this.closeModal('confirm-modal');
+                };
+                this.openModal('confirm-modal');
+            },
+
+            deletePost(postId) {
+                this.confirmDelete('게시물을 삭제하시겠습니까?', () => {
+                    this.state.posts = this.state.posts.filter(p => p.id !== postId);
+                    this.saveData('posts');
+                    this.renderBoard();
+                });
+            },
+
+            deleteEvent(dateStr, eventId) {
+                this.confirmDelete('해당 일정을 캘린더에서 삭제하시겠습니까?', () => {
+                    this.state.events[dateStr] = this.state.events[dateStr].filter(evt => evt.id !== eventId);
+                    if(this.state.events[dateStr].length === 0) {
+                        delete this.state.events[dateStr];
+                    }
+                    this.saveData('events');
+                    this.renderCalendar();
+                });
+            },
+
             addVoteOption() {
                 const container = document.getElementById('vote-options-container');
                 const count = container.children.length + 1;
@@ -873,7 +1034,39 @@
             // ==================================================================
 
             saveData(key) {
-                store.set(key, this.state[key]);
+                store.set(key, this.state[key]); // 만약을 대비해 내 브라우저에도 저장
+                this.saveToCloud(key);           // 핵심: 특정 키(항목)만 클라우드에 병합 저장
+            },
+
+            async saveToCloud(key) {
+                if (!isCloudReady || !docRef) return;
+                try {
+                    // 특정 필드(배열이나 객체)를 '완전히 교체'하기 위해 updateDoc을 사용합니다.
+                    // (merge: true일 경우 삭제된 항목이 클라우드에서 되살아나는 현상 방지)
+                    await updateDoc(docRef, {
+                        [key]: this.state[key]
+                    });
+                } catch (e) {
+                    console.error("클라우드 저장 실패:", e);
+                    // 혹시 문서가 생성되기 전이라면 setDoc으로 덮어쓰기 보완
+                    await setDoc(docRef, {
+                        [key]: this.state[key]
+                    }, { merge: true });
+                }
+            },
+
+            async saveAllToCloud() {
+                if (!isCloudReady || !docRef) return;
+                try {
+                    await setDoc(docRef, {
+                        events: this.state.events,
+                        posts: this.state.posts,
+                        votes: this.state.votes,
+                        statuses: this.state.statuses
+                    }, { merge: true });
+                } catch (e) {
+                    console.error("클라우드 전체 저장 실패:", e);
+                }
             },
 
             openModal(id) {
