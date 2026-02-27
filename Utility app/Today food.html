@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Utensils, Coffee, Sun, Sunrise, Moon, ChefHat, Pizza, Fish, Soup, IceCream, RotateCcw, Play } from 'lucide-react';
+import { Utensils, Coffee, Sun, Sunrise, Moon, ChefHat, Pizza, Fish, Soup, IceCream, RotateCcw, Play, Plus, Minus, CheckCircle } from 'lucide-react';
 
 // 카테고리별 20가지 음식 데이터
 const FOOD_DATABASE = {
@@ -29,25 +29,49 @@ export default function App() {
   const [step, setStep] = useState(1); // 1: 시간 선택, 2: 종류 선택, 3: 룰렛, 4: 결과
   const [mealTime, setMealTime] = useState('');
   const [category, setCategory] = useState('');
-  const [currentDisplayFood, setCurrentDisplayFood] = useState('?');
   const [isSpinning, setIsSpinning] = useState(false);
-  const [resultFood, setResultFood] = useState('');
   
+  const [menuCount, setMenuCount] = useState(1);
+  const [currentDisplayFoods, setCurrentDisplayFoods] = useState(['?']);
+  const [resultFoods, setResultFoods] = useState([]);
+  const [eatenHistory, setEatenHistory] = useState(() => {
+    try {
+      const saved = localStorage.getItem('eatenHistory');
+      return saved ? JSON.parse(saved) : {};
+    } catch (e) {
+      return {};
+    }
+  });
+
   const spinIntervalRef = useRef(null);
+
+  // 쿨다운(3일) 적용하여 가능한 음식 목록 반환
+  const getAvailableFoods = (cat) => {
+    const now = Date.now();
+    const COOLDOWN_DAYS = 3;
+    const available = FOOD_DATABASE[cat].filter(food => {
+      const eatenTime = eatenHistory[food];
+      if (!eatenTime) return true;
+      const daysPassed = (now - eatenTime) / (1000 * 60 * 60 * 24);
+      return daysPassed >= COOLDOWN_DAYS;
+    });
+    // 가능한 메뉴가 고를 개수보다 적으면 무한루프 방지를 위해 전체 메뉴 반환
+    return available.length < menuCount ? FOOD_DATABASE[cat] : available;
+  };
 
   // 룰렛 회전 효과
   useEffect(() => {
     if (isSpinning) {
-      const foods = FOOD_DATABASE[category];
+      const foods = getAvailableFoods(category);
       spinIntervalRef.current = setInterval(() => {
-        const randomIndex = Math.floor(Math.random() * foods.length);
-        setCurrentDisplayFood(foods[randomIndex]);
+        const newDisplays = Array(menuCount).fill(0).map(() => foods[Math.floor(Math.random() * foods.length)]);
+        setCurrentDisplayFoods(newDisplays);
       }, 50); // 0.05초마다 텍스트 변경
     } else {
       clearInterval(spinIntervalRef.current);
     }
     return () => clearInterval(spinIntervalRef.current);
-  }, [isSpinning, category]);
+  }, [isSpinning, category, menuCount, eatenHistory]);
 
   const handleTimeSelect = (time) => {
     setMealTime(time);
@@ -57,7 +81,7 @@ export default function App() {
   const handleCategorySelect = (cat) => {
     setCategory(cat);
     setStep(3);
-    setCurrentDisplayFood('준비 완료!');
+    setCurrentDisplayFoods(Array(menuCount).fill('준비 완료!'));
   };
 
   const startSpin = () => {
@@ -66,11 +90,14 @@ export default function App() {
 
   const stopSpin = () => {
     setIsSpinning(false);
-    // 멈출 때 완전 랜덤으로 하나를 최종 선택하여 결정
-    const foods = FOOD_DATABASE[category];
-    const finalFood = foods[Math.floor(Math.random() * foods.length)];
-    setCurrentDisplayFood(finalFood);
-    setResultFood(finalFood);
+    const foods = getAvailableFoods(category);
+    
+    // 중복 없이 menuCount 만큼 뽑기
+    const shuffled = [...foods].sort(() => 0.5 - Math.random());
+    const finalFoods = shuffled.slice(0, menuCount);
+    
+    setCurrentDisplayFoods(finalFoods);
+    setResultFoods(finalFoods);
     
     // 약간의 딜레이 후 결과 화면으로 이동
     setTimeout(() => {
@@ -82,8 +109,21 @@ export default function App() {
     setStep(1);
     setMealTime('');
     setCategory('');
-    setCurrentDisplayFood('?');
-    setResultFood('');
+    setCurrentDisplayFoods(['?']);
+    setResultFoods([]);
+    setMenuCount(1);
+  };
+
+  const markAsEaten = () => {
+    const now = Date.now();
+    const newHistory = { ...eatenHistory };
+    resultFoods.forEach(food => {
+      newHistory[food] = now;
+    });
+    setEatenHistory(newHistory);
+    localStorage.setItem('eatenHistory', JSON.stringify(newHistory));
+    alert('선택하신 메뉴는 3일 동안 추천 목록에서 제외됩니다! 맛있게 드세요!');
+    resetAll();
   };
 
   return (
@@ -134,13 +174,26 @@ export default function App() {
                   {mealTime}
                 </span>
               </div>
-              <h2 className="text-2xl font-bold text-center mb-8">어떤 종류가 끌리나요?</h2>
+              <h2 className="text-2xl font-bold text-center mb-6">어떤 종류가 끌리나요?</h2>
+              
+              {/* 메뉴 개수 선택 UI 추가 */}
+              <div className="flex items-center justify-center gap-4 mb-6 bg-orange-50 py-3 px-6 rounded-2xl w-max mx-auto border border-orange-100">
+                <span className="font-bold text-gray-700">몇 개 고를까요?</span>
+                <div className="flex items-center gap-3 bg-white px-3 py-1 rounded-full shadow-sm border border-gray-100">
+                  <button onClick={() => setMenuCount(Math.max(1, menuCount - 1))} className="text-gray-400 hover:text-orange-500 transition-colors"><Minus size={20} /></button>
+                  <span className="font-black text-xl w-6 text-center text-orange-600">{menuCount}</span>
+                  <button onClick={() => setMenuCount(Math.min(5, menuCount + 1))} className="text-gray-400 hover:text-orange-500 transition-colors"><Plus size={20} /></button>
+                </div>
+              </div>
+
               <div className="grid grid-cols-2 gap-4">
                 <SelectionCard icon={<Soup size={32} />} label="한식" onClick={() => handleCategorySelect('한식')} />
                 <SelectionCard icon={<ChefHat size={32} />} label="중식" onClick={() => handleCategorySelect('중식')} />
                 <SelectionCard icon={<Fish size={32} />} label="일식" onClick={() => handleCategorySelect('일식')} />
                 <SelectionCard icon={<Pizza size={32} />} label="양식" onClick={() => handleCategorySelect('양식')} />
-                <SelectionCard icon={<IceCream size={32} className="col-span-2" />} label="디저트" fullWidth onClick={() => handleCategorySelect('디저트')} />
+                {mealTime === '간식' && (
+                  <SelectionCard icon={<IceCream size={32} className="col-span-2" />} label="디저트" fullWidth onClick={() => handleCategorySelect('디저트')} />
+                )}
               </div>
             </div>
           )}
@@ -151,12 +204,15 @@ export default function App() {
               <div className="flex gap-2 mb-8">
                 <span className="bg-orange-100 text-orange-600 px-3 py-1 rounded-full text-sm font-bold">{mealTime}</span>
                 <span className="bg-orange-100 text-orange-600 px-3 py-1 rounded-full text-sm font-bold">{category}</span>
+                <span className="bg-orange-100 text-orange-600 px-3 py-1 rounded-full text-sm font-bold">{menuCount}개</span>
               </div>
               
-              <div className="relative w-full h-48 bg-gray-50 rounded-2xl border-4 border-dashed border-gray-200 flex items-center justify-center mb-8 overflow-hidden shadow-inner">
-                <div className={`text-4xl md:text-5xl font-black text-gray-800 text-center px-4 break-keep ${isSpinning ? 'opacity-80' : 'opacity-100 text-orange-600'}`}>
-                  {currentDisplayFood}
-                </div>
+              <div className="relative w-full min-h-48 py-8 bg-gray-50 rounded-2xl border-4 border-dashed border-gray-200 flex flex-col items-center justify-center gap-4 mb-8 overflow-hidden shadow-inner">
+                {currentDisplayFoods.map((food, idx) => (
+                  <div key={idx} className={`text-4xl md:text-5xl font-black text-gray-800 text-center px-4 break-keep ${isSpinning ? 'opacity-80' : 'opacity-100 text-orange-600'}`}>
+                    {food}
+                  </div>
+                ))}
                 {/* 그라데이션 오버레이로 룰렛 느낌 내기 */}
                 <div className="absolute top-0 left-0 w-full h-1/4 bg-gradient-to-b from-gray-50 to-transparent"></div>
                 <div className="absolute bottom-0 left-0 w-full h-1/4 bg-gradient-to-t from-gray-50 to-transparent"></div>
@@ -184,27 +240,39 @@ export default function App() {
           {step === 4 && (
             <div className="w-full flex flex-col items-center animate-in zoom-in-95 duration-500 text-center">
               <span className="text-gray-500 font-medium mb-2">오늘의 {mealTime} 추천 메뉴는...</span>
-              <div className="text-5xl md:text-6xl font-black text-orange-600 mb-8 py-6 px-4 bg-orange-50 rounded-3xl w-full border-2 border-orange-200 shadow-inner">
-                {resultFood}
+              <div className="flex flex-col gap-3 w-full mb-8">
+                {resultFoods.map((food, idx) => (
+                  <div key={idx} className="text-5xl md:text-6xl font-black text-orange-600 py-6 px-4 bg-orange-50 rounded-3xl w-full border-2 border-orange-200 shadow-inner">
+                    {food}
+                  </div>
+                ))}
               </div>
               
-              <p className="text-gray-600 mb-10 font-medium">
+              <p className="text-gray-600 mb-8 font-medium">
                 맛있는 {mealTime} 되세요! 😋
               </p>
 
-              <div className="flex gap-4 w-full">
+              <div className="flex flex-col gap-3 w-full">
                 <button 
-                  onClick={() => setStep(3)}
-                  className="flex-1 py-3 bg-white border-2 border-orange-500 text-orange-500 hover:bg-orange-50 rounded-xl font-bold text-lg transition-colors flex items-center justify-center gap-2"
+                  onClick={markAsEaten}
+                  className="w-full py-3 bg-green-500 hover:bg-green-600 text-white rounded-xl font-bold text-lg shadow-md transition-colors flex items-center justify-center gap-2"
                 >
-                  <RotateCcw size={20} /> 다시 뽑기
+                  <CheckCircle size={20} /> 이거 먹을래요! (3일간 제외)
                 </button>
-                <button 
-                  onClick={resetAll}
-                  className="flex-1 py-3 bg-orange-500 hover:bg-orange-600 text-white rounded-xl font-bold text-lg shadow-md transition-colors"
-                >
-                  처음부터
-                </button>
+                <div className="flex gap-4 w-full">
+                  <button 
+                    onClick={() => setStep(3)}
+                    className="flex-1 py-3 bg-white border-2 border-orange-500 text-orange-500 hover:bg-orange-50 rounded-xl font-bold text-lg transition-colors flex items-center justify-center gap-2"
+                  >
+                    <RotateCcw size={20} /> 다시 뽑기
+                  </button>
+                  <button 
+                    onClick={resetAll}
+                    className="flex-1 py-3 bg-orange-500 hover:bg-orange-600 text-white rounded-xl font-bold text-lg shadow-md transition-colors"
+                  >
+                    처음부터
+                  </button>
+                </div>
               </div>
             </div>
           )}
