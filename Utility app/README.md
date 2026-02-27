@@ -2,7 +2,7 @@
 ## 카테고리: 유틸리티 앱
 
 ### 배포 링크
-https://gemini.google.com/share/0464b8bc5fb4
+https://gemini.google.com/share/fb6e39242663
 
 ### 이 앱을 만든 이유
 
